@@ -13,3 +13,4 @@ SName == "IntVector"
 || SName == "IntPoint"
 || SName == "Rotator"
 || SName == "Guid") return;
+
