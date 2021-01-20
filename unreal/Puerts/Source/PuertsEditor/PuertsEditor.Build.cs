@@ -30,10 +30,10 @@ public class PuertsEditor : ModuleRules {
                 "DirectoryWatcher",
                 "AssetRegistry",
                 "KismetCompiler",
-                "ScriptDisassembler",
                 "BlueprintGraph",
                 "AssetTools"
             }
         );
+        bEnableUndefinedIdentifierWarnings = false; // 避免在VS 2017编译时出现C4668错误
     }
 }

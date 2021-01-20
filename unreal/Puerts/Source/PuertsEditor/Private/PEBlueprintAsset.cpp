@@ -13,11 +13,13 @@
 #include "UObject/MetaData.h"
 #include "FunctionParametersDuplicate.h"
 #include "CoreGlobals.h"
-#include "ScriptDisassembler.h"
 #include "K2Node_FunctionEntry.h"
 #include "EdGraphSchema_K2_Actions.h"
 #include "K2Node_Event.h"
 #include "K2Node_FunctionResult.h"
+#include "GameFramework/InputSettings.h"
+#include "K2Node_InputAxisEvent.h"
+#include "TypeScriptGeneratedClass.h"
 
 UClass* FindClass(const TCHAR* ClassName)
 {
@@ -34,61 +36,50 @@ UClass* FindClass(const TCHAR* ClassName)
     return nullptr;
 }
 
-bool UPEBlueprintAsset::IsExisted(const FString& InName, const FString& InPath)
+bool UPEBlueprintAsset::LoadOrCreate(const FString& InName, const FString& InPath, UClass* ParentClass)
 {
     FString PackageName = FString(TEXT("/Game/Blueprints/TypeScript/")) / InPath / InName;
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    TArray<FAssetData> AssetDatas;
-    return (AssetRegistryModule.Get().GetAssetsByPackageName(*PackageName, AssetDatas) && AssetDatas.Num() > 0);
-}
 
-bool UPEBlueprintAsset::Load(const FString& InParentClassName, const FString& InName, const FString& InPath)
-{
-    UClass* ParentClass = FindClass(*InParentClassName);
-    //UE_LOG(LogTemp, Warning, TEXT("InParentClassName: %s(%p)"), *InParentClassName, ParentClass);
-    //UE_LOG(LogTemp, Warning, TEXT("InName: %s"), *InName);
-    //UE_LOG(LogTemp, Warning, TEXT("InPath: %s"), *InPath);
-
-    FString PackageName = FString(TEXT("/Game/Blueprints/TypeScript/")) / InPath / InName;
-
-    //UE_LOG(LogTemp, Warning, TEXT("PackageName: %s"), *PackageName);
+    //UE_LOG(LogTemp, Warning, TEXT("LoadOrCreate.PackageName: %s"), *PackageName);
 
     Blueprint = LoadObject<UBlueprint>(nullptr, *PackageName, nullptr, LOAD_NoWarn | LOAD_NoRedirects);
-    if (Blueprint) //防止StaticLoadObject找不到文件的Warning
+    if (Blueprint) 
     {
         GeneratedClass = Blueprint->GeneratedClass;
         Package = Cast<UPackage>(Blueprint->GetOuter());
-        //UE_LOG(LogTemp, Warning, TEXT("existed BlueprintGeneratedClass: %s"), *GeneratedClass->GetName());
-        //UE_LOG(LogTemp, Warning, TEXT("existed Package: %s"), *Package->GetName());
+        NeedSave = false;
         return true;
     }
 
-    if (!ParentClass) ParentClass = UObject::StaticClass();
+    if (!ParentClass) return false;
+
+    NeedSave = true;
 
     UClass* BlueprintClass = nullptr;
     UClass* BlueprintGeneratedClass = nullptr;
 
     IKismetCompilerInterface& KismetCompilerModule = FModuleManager::LoadModuleChecked<IKismetCompilerInterface>("KismetCompiler");
     KismetCompilerModule.GetBlueprintTypesForClass(ParentClass, BlueprintClass, BlueprintGeneratedClass);
+    BlueprintGeneratedClass = UTypeScriptGeneratedClass::StaticClass();
 
     //UE_LOG(LogTemp, Warning, TEXT("BlueprintClass: %s"), *BlueprintClass->GetName());
     //UE_LOG(LogTemp, Warning, TEXT("BlueprintGeneratedClass: %s"), *BlueprintGeneratedClass->GetName());
 
-    FString Name;
-    FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-    AssetToolsModule.Get().CreateUniqueAssetName(PackageName, TEXT(""), PackageName, Name);
+    //FString Name;
+    //FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+    //AssetToolsModule.Get().CreateUniqueAssetName(PackageName, TEXT(""), PackageName, Name);
 
-    //UE_LOG(LogTemp, Warning, TEXT("Name: %s, PackageName: %s"), *Name, *PackageName);
+    //UE_LOG(LogTemp, Warning, TEXT("Name: %s, PackageName: %s, InName:%s, InPath:%s"), *Name, *PackageName, *InName, *InPath);
 
     Package = CreatePackage(NULL, *PackageName);
     check(Package);
 
     // Create and init a new Blueprint
-    Blueprint = FKismetEditorUtilities::CreateBlueprint(ParentClass, Package, *Name, BPTYPE_Normal, BlueprintClass, BlueprintGeneratedClass, FName("LevelEditorActions"));
+    Blueprint = FKismetEditorUtilities::CreateBlueprint(ParentClass, Package, *InName, BPTYPE_Normal, BlueprintClass, BlueprintGeneratedClass, FName("LevelEditorActions"));
     if (Blueprint)
     {
-        static FName InterfaceClassName = FName(TEXT("TypeScriptObject"));
-        FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceClassName);
+        //static FName InterfaceClassName = FName(TEXT("TypeScriptObject"));
+        //FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceClassName);
         // Notify the asset registry
         FAssetRegistryModule::AssetCreated(Blueprint);
 
@@ -150,7 +141,7 @@ static FEdGraphPinType ToFEdGraphPinType(FPEGraphPinType InGraphPinType, FPEGrap
     if (PinType.ContainerType == EPinContainerType::Map)
     {
         PinType.PinValueType.TerminalCategory = InPinValueType.PinCategory;
-        PinType.PinValueType.TerminalSubCategoryObject = InGraphPinType.PinSubCategoryObject;
+        PinType.PinValueType.TerminalSubCategoryObject = InPinValueType.PinSubCategoryObject;
     }
 
     return PinType;
@@ -175,14 +166,90 @@ static TArray<UK2Node_EditablePinBase*> GatherAllResultNodes(UK2Node_EditablePin
     }
     return Result;
 }
+#if ENGINE_MINOR_VERSION <= 23
+UFunction* GetInterfaceFunction(UBlueprint* Blueprint, const FName FuncName)
+{
+    UFunction* Function = nullptr;
+
+    // If that class is an interface class implemented by this function, then return true
+    for (const FBPInterfaceDescription& I : Blueprint->ImplementedInterfaces)
+    {
+        if (I.Interface)
+        {
+            Function = FindField<UFunction>(I.Interface, FuncName);
+            if (Function)
+            {
+                // found it, done
+                return Function;
+            }
+        }
+    }
+
+    // Check if it is in a native class or parent class
+    for (UClass* TempClass = Blueprint->ParentClass; (nullptr != TempClass) && (nullptr == Function); TempClass = TempClass->GetSuperClass())
+    {
+        for (const FImplementedInterface& I : TempClass->Interfaces)
+        {
+            Function = FindField<UFunction>(I.Class, FuncName);
+            if (Function)
+            {
+                // found it, done
+                return Function;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+
+UClass* const GetOverrideFunctionClass(UBlueprint* Blueprint, const FName FuncName, UFunction** OutFunction)
+{
+    if (!Blueprint->SkeletonGeneratedClass)
+    {
+        return nullptr;
+    }
+
+    UFunction* OverrideFunc = GetInterfaceFunction(Blueprint, FuncName);
+
+    if (OverrideFunc == nullptr)
+    {
+        OverrideFunc = FindField<UFunction>(Blueprint->SkeletonGeneratedClass, FuncName);
+        // search up the class hierarchy, we want to find the original declaration of the function to match FBlueprintEventNodeSpawner.
+        // Doing so ensures that we can find the existing node if there is one:
+        const UClass* Iter = Blueprint->SkeletonGeneratedClass->GetSuperClass();
+        while (Iter != nullptr && OverrideFunc == nullptr)
+        {
+            if (UFunction * F = Iter->FindFunctionByName(FuncName))
+            {
+                OverrideFunc = F;
+            }
+            else
+            {
+                break;
+            }
+            Iter = Iter->GetSuperClass();
+        }
+    }
+    if (OutFunction != nullptr)
+    {
+        *OutFunction = OverrideFunc;
+    }
+
+    return (OverrideFunc ? CastChecked<UClass>(OverrideFunc->GetOuter())->GetAuthoritativeClass() : nullptr);
+}
+#endif
 
 void UPEBlueprintAsset::AddFunction(FName InName, bool IsVoid, FPEGraphPinType InGraphPinType, FPEGraphTerminalType InPinValueType)
 {
+    NeedSave = true;
+
     UClass* SuperClass = GeneratedClass->GetSuperClass();
 
     UFunction* ParentFunction = SuperClass->FindFunctionByName(InName);
 
     UFunction* Function = GeneratedClass->FindFunctionByName(InName, EIncludeSuperFlag::ExcludeSuper);
+
     if (ParentFunction && Function)
     {
         ParameterNames.Empty();
@@ -192,6 +259,9 @@ void UPEBlueprintAsset::AddFunction(FName InName, bool IsVoid, FPEGraphPinType I
 
     Blueprint->Modify();
 
+    TArray<FName> AxisNames;
+    GetDefault<UInputSettings>()->GetAxisNames(AxisNames);
+
     // Create the function graph.
     
     const bool bUserCreated = true;
@@ -200,7 +270,11 @@ void UPEBlueprintAsset::AddFunction(FName InName, bool IsVoid, FPEGraphPinType I
         //UE_LOG(LogTemp, Warning, TEXT("Override Function %s"), *ParentFunction->GetName());
         //FBlueprintEditorUtils::AddFunctionGraph(Blueprint, FunctionGraph, bUserCreated, ParentFunction);
         UFunction* OverrideFunc = nullptr;
+#if ENGINE_MINOR_VERSION <= 23
+        UClass* const OverrideFuncClass = GetOverrideFunctionClass(Blueprint, InName, &OverrideFunc);
+#else
         UClass* const OverrideFuncClass = FBlueprintEditorUtils::GetOverrideFunctionClass(Blueprint, InName, &OverrideFunc);
+#endif
         check(OverrideFunc);
 
         UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
@@ -224,6 +298,28 @@ void UPEBlueprintAsset::AddFunction(FName InName, bool IsVoid, FPEGraphPinType I
                     }
                 );
             }
+        }
+    }
+    else if (AxisNames.Contains(InName))
+    {
+        TArray<UK2Node_InputAxisEvent*> AllEvents;
+        //TODO: K2Node_InputTouchEvent,K2Node_InputVectorAxisEvent,K2Node_InputAxisKeyEvent,UK2Node_InputKeyEvent
+        FBlueprintEditorUtils::GetAllNodesOfClass<UK2Node_InputAxisEvent>(Blueprint, AllEvents);
+
+        UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+
+        if (EventGraph && !AllEvents.FindByPredicate([&](UK2Node_InputAxisEvent* Node) { return Node->InputAxisName == InName; }))
+        {
+            //UE_LOG(LogTemp, Warning, TEXT("Add Axis: %s"), *InName.ToString());
+            FEdGraphSchemaAction_K2NewNode::SpawnNode<UK2Node_InputAxisEvent>(
+                EventGraph,
+                EventGraph->GetGoodPlaceForNewNode(),
+                EK2NewNodeFlags::SelectNewNode,
+                [InName](UK2Node_InputAxisEvent* NewInstance)
+                {
+                    NewInstance->Initialize(InName);
+                }
+            );
         }
     }
     else
@@ -293,6 +389,7 @@ void UPEBlueprintAsset::ClearParameter()
 
 void UPEBlueprintAsset::AddMemberVariable(FName NewVarName, FPEGraphPinType InGraphPinType, FPEGraphTerminalType InPinValueType)
 {
+    NeedSave = true;
     FEdGraphPinType PinType = ToFEdGraphPinType(InGraphPinType, InPinValueType);
 
     const int32 VarIndex = FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, NewVarName);
@@ -309,7 +406,7 @@ void UPEBlueprintAsset::AddMemberVariable(FName NewVarName, FPEGraphPinType InGr
 
 void UPEBlueprintAsset::RemoveNotExistedMemberVariable()
 {
-    //Blueprint->NewVariables->
+    NeedSave = true;
     if (Blueprint)
     {
         TArray<FName> ToDelete;
@@ -331,6 +428,7 @@ void UPEBlueprintAsset::RemoveNotExistedMemberVariable()
 
 void UPEBlueprintAsset::RemoveNotExistedFunction()
 {
+    NeedSave = true;
     if (Blueprint)
     {
         Blueprint->FunctionGraphs.RemoveAll([&](UEdGraph* Graph) { return !FunctionAdded.Contains(Graph->GetFName()); });
@@ -340,7 +438,7 @@ void UPEBlueprintAsset::RemoveNotExistedFunction()
 
 void UPEBlueprintAsset::Save()
 {
-    if (Blueprint)
+    if (Blueprint && NeedSave)
     {
         FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
