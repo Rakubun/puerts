@@ -253,11 +253,17 @@ public class JsEnv : ModuleRules
             Directory.CreateDirectory(destDirName);
         }
 
+
         // Get the files in the directory and copy them to the new location.
         FileInfo[] files = dir.GetFiles();
         foreach (FileInfo file in files)
         {
             string temppath = Path.Combine(destDirName, file.Name);
+            // Remove file ReadOnly attr, add by zhanglewen
+            if (File.Exists(temppath))
+            {
+                File.SetAttributes(temppath, System.IO.FileAttributes.Normal);
+            }
             file.CopyTo(temppath, true);
         }
 
