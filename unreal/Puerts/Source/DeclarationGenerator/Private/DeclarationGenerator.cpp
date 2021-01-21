@@ -864,7 +864,16 @@ public:
 
             LevelEditorModule.GetToolBarExtensibilityManager()->AddExtender(ToolbarExtender);
         }
+
+        FEditorDelegates::PreBeginPIE.AddRaw(this, &FDeclarationGenerator::PreBeginPIE);
     }
+
+    void PreBeginPIE(bool bIsSimulating)
+    {
+        LoadAllWidgetBlueprint();
+        GenTypeScriptDeclaration();
+        GenReactDeclaration();
+    };
 
     void ShutdownModule() override 
     {
