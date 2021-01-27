@@ -237,6 +237,13 @@ private:
 
     void DumpStatisticsLog(const v8::FunctionCallbackInfo<v8::Value> &Info);
 
+    // Add by ZhangLewen
+    uint32 GetUsedHeapSize(const v8::FunctionCallbackInfo<v8::Value>& Info);
+
+    void LowMemoryNotification(const v8::FunctionCallbackInfo<v8::Value>& Info);
+
+    // Add End
+
     struct ObjectMerger;
 
     std::unique_ptr<ObjectMerger>& GetObjectMerger(UStruct * Struct);
@@ -619,6 +626,22 @@ FJsEnvImpl::FJsEnvImpl(std::unique_ptr<IJSModuleLoader> InModuleLoader, std::sha
         auto Self = reinterpret_cast<FJsEnvImpl*>((v8::Local<v8::External>::Cast(Info.Data()))->Value());
         Self->DumpStatisticsLog(Info);
     }, This)->GetFunction(Context).ToLocalChecked()).Check();
+
+    // Add by ZhangLewen
+    Global->Set(Context, FV8Utils::ToV8String(Isolate, "getusedheapsize"), v8::FunctionTemplate::New(Isolate, [](const v8::FunctionCallbackInfo<v8::Value>& Info)
+    {
+        auto Self = reinterpret_cast<FJsEnvImpl*>((v8::Local<v8::External>::Cast(Info.Data()))->Value());
+        uint32 ret = Self->GetUsedHeapSize(Info);
+        Info.GetReturnValue().Set(ret);
+    }, This)->GetFunction(Context).ToLocalChecked()).Check();
+
+    Global->Set(Context, FV8Utils::ToV8String(Isolate, "LowMemoryNotification"), v8::FunctionTemplate::New(Isolate, [](const v8::FunctionCallbackInfo<v8::Value>& Info)
+    {
+        auto Self = reinterpret_cast<FJsEnvImpl*>((v8::Local<v8::External>::Cast(Info.Data()))->Value());
+        Self->LowMemoryNotification(Info);
+    }, This)->GetFunction(Context).ToLocalChecked()).Check();
+
+    // Add End
 
     ArrayTemplate = v8::UniquePersistent<v8::FunctionTemplate>(Isolate, FScriptArrayWrapper::ToFunctionTemplate(Isolate));
 
@@ -2539,4 +2562,31 @@ void FJsEnvImpl::DumpStatisticsLog(const v8::FunctionCallbackInfo<v8::Value> &In
 
     Logger->Info(StatisticsLog);
 }
+
+uint32 FJsEnvImpl::GetUsedHeapSize(const v8::FunctionCallbackInfo<v8::Value>& Info)
+{
+    v8::HeapStatistics Statistics;
+
+    v8::Isolate* Isolate = Info.GetIsolate();
+    v8::Isolate::Scope IsolateScope(Isolate);
+    v8::HandleScope HandleScope(Isolate);
+    v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
+    v8::Context::Scope ContextScope(Context);
+
+    Isolate->GetHeapStatistics(&Statistics);
+
+    return Statistics.used_heap_size();
+}
+
+void FJsEnvImpl::LowMemoryNotification(const v8::FunctionCallbackInfo<v8::Value>& Info)
+{
+    v8::Isolate* Isolate = Info.GetIsolate();
+    v8::Isolate::Scope IsolateScope(Isolate);
+    v8::HandleScope HandleScope(Isolate);
+    v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
+    v8::Context::Scope ContextScope(Context);
+
+    Isolate->LowMemoryNotification();
+}
+
 }
